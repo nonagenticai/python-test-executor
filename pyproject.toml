@@ -80,7 +80,9 @@ known-first-party = ["src"]
 python-version = "3.14"
 
 [tool.ty.rules]
-unresolved-import = "ignore"
+# Renamed by ty 0.0.10x (the archetype pins the checker, so the config follows it):
+# `unresolved-import` -> `import-not-found`.
+import-not-found = "ignore"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
