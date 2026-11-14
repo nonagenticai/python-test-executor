@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+.DS_Store
+node_modules/
+__pycache__/
+.venv/
+*.pyc
+.ruff_cache/
+logs/*.log
+src/python_test_executor.egg-info/
+.coverage
+
+# CI failure reports
+01_recent_push_failure.txt

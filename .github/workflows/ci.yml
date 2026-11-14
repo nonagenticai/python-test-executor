@@ -1,0 +1,46 @@
+name: CI
+
+# The public pipeline: nonagenticai/ci-workflows, GitHub-hosted runners, no repository secrets.
+# It runs ruff + ty + the unit suite + uv build + bandit + pip-audit, plus a secret scan and a
+# private-infrastructure scan, then builds this repo's Dockerfile and publishes it to
+# ghcr.io/nonagenticai/python-test-executor from main.
+#
+# There is no deploy job. This service is retired from the estate's cluster; the repository is
+# published so its tests, image build and job contract stay readable and reproducible.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    if: ${{ !github.event.repository.private }}
+    uses: nonagenticai/ci-workflows/.github/workflows/python-service.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image_name: python-test-executor
+      src_dir: src
+      # Stateless code-exec sandbox: no postgres, no redis, no migrations.
+      has_postgres: false
+      has_redis: false
+      alembic: false
+      build_smoke: |
+        set -euo pipefail
+        docker run -d --name smoke-python-executor -p 18087:8087 "$IMAGE_REF"
+        ok=0
+        for i in $(seq 1 30); do
+          if curl -sf http://127.0.0.1:18087/health >/dev/null 2>&1; then
+            echo "health ok (attempt $i)"; ok=1; break
+          fi
+          sleep 1
+        done
+        docker logs smoke-python-executor || true
+        docker rm -f smoke-python-executor || true
+        [ "$ok" -eq 1 ]

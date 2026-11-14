@@ -1,0 +1,25 @@
+services:
+  python-test-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: python-test-executor
+    ports:
+      - "0.0.0.0:8087:8087"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      PORT: 8087
+      TEST_MODE: "true"
+    networks:
+      - workflow-system-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  workflow-system-network:
+    driver: bridge
