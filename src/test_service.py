@@ -7,7 +7,6 @@ import asyncio
 import logging
 import os
 import py_compile
-import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -96,17 +95,44 @@ class TestResponse(BaseModel):
 #   0 all passed · 1 tests failed · 2 interrupted · 3 internal error
 #   4 usage error · 5 NO TESTS COLLECTED
 _PYTEST_NO_TESTS_COLLECTED = 5
-_PYTEST_PASSED = re.compile(r"(\d+) passed")
-_PYTEST_FAILED = re.compile(r"(\d+) failed")
-_PYTEST_ERRORS = re.compile(r"(\d+) errors?")
+
+
+def _count_before(output: str, suffix: str) -> int:
+    """First integer immediately preceding ``suffix`` in ``output``, else 0.
+
+    Linear-time equivalent of ``re.search(r"(\\d+)" + suffix, output)``, which
+    CodeQL flagged as py/polynomial-redos: at every start position the greedy
+    ``\\d+`` rescans the remainder of a digit run before backtracking, so output
+    such as ``"9" * n`` with no suffix costs O(n²). This scans each character a
+    constant number of times. ``str.isdecimal()`` preserves Python's ``\\d``
+    semantics (Unicode category Nd).
+    """
+    search_from = 0
+    while True:
+        end = output.find(suffix, search_from)
+        if end == -1:
+            return 0
+        start = end
+        while start > 0 and output[start - 1].isdecimal():
+            start -= 1
+        if start < end:
+            try:
+                return int(output[start:end])
+            except ValueError:
+                # More digits than CPython's int() will convert (default limit:
+                # 4300). The documented contract is a 0 fallback; the old regex
+                # reached the same int() and let ValueError escape as a 500.
+                return 0
+        search_from = end + 1
 
 
 def _parse_pytest_counts(output: str) -> tuple[int, int, int]:
     """Parse (passed, failed, run) from a pytest summary line. Defensive: a count
     that cannot be parsed falls back to 0 — the verdict still follows the exit code."""
-    passed = int(m.group(1)) if (m := _PYTEST_PASSED.search(output)) else 0
-    failed = int(m.group(1)) if (m := _PYTEST_FAILED.search(output)) else 0
-    errors = int(m.group(1)) if (m := _PYTEST_ERRORS.search(output)) else 0
+    passed = _count_before(output, " passed")
+    failed = _count_before(output, " failed")
+    # " error" also covers " errors": the old regex's optional ``s`` added no capture.
+    errors = _count_before(output, " error")
     failed_total = failed + errors
     return passed, failed_total, passed + failed_total
 

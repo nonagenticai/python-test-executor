@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import sys
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +14,7 @@ from src.test_service import (
     HealthResponse,
     TestRequest,
     TestResponse,
+    _parse_pytest_counts,
     app,
 )
 
@@ -475,3 +479,64 @@ class TestMainBlock:
             )
         finally:
             _sys.path[:] = original_path
+
+
+# ---------------------------------------------------------------------------
+# _parse_pytest_counts — linear-time scanner (py/polynomial-redos)
+# ---------------------------------------------------------------------------
+class TestParsePytestCounts:
+    """The scanner replaced three regexes CodeQL flagged as py/polynomial-redos.
+    These tests pin behavioural parity with the old regexes and a time budget
+    that the old implementation cannot meet on adversarial digit runs."""
+
+    LEGACY = (
+        re.compile(r"(\d+) passed"),
+        re.compile(r"(\d+) failed"),
+        re.compile(r"(\d+) errors?"),
+    )
+
+    def _legacy_counts(self, output: str) -> tuple[int, int, int]:
+        passed = int(m.group(1)) if (m := self.LEGACY[0].search(output)) else 0
+        failed = int(m.group(1)) if (m := self.LEGACY[1].search(output)) else 0
+        errors = int(m.group(1)) if (m := self.LEGACY[2].search(output)) else 0
+        return passed, failed + errors, passed + failed + errors
+
+    PARITY_CORPUS = [
+        "",
+        "no counts here",
+        "1 passed",
+        "3 passed, 1 failed, 2 errors",
+        "1 error",
+        "2 errors",
+        "12 passed 4 passed",
+        "bypassed 7 passed",
+        "12  passed",
+        "1errors",
+        " passed",
+        "0 passed",
+        "1 passed, 1 failed, 1 error",
+        "1 passed\n2 failed\n3 errors in 0.4s",
+        "5 passed, 1 warning",
+        "1.5 passed",
+        "12345678901234567890 passed",
+        "٣ passed",  # \d is Unicode Nd; the scanner must agree
+    ]
+
+    @pytest.mark.parametrize("output", PARITY_CORPUS)
+    def test_parity_with_legacy_regexes(self, output):
+        assert _parse_pytest_counts(output) == self._legacy_counts(output)
+
+    def test_adversarial_digit_run_is_linear(self):
+        # The old (\d+) scan is O(n²) here: every start position rescans the
+        # run looking for a suffix that never appears.
+        started = time.perf_counter()
+        counts = _parse_pytest_counts("9" * 500_000)
+        elapsed = time.perf_counter() - started
+        assert counts == (0, 0, 0)
+        assert elapsed < 1.0, f"took {elapsed:.3f}s — polynomial backtracking is back"
+
+    def test_count_beyond_int_limit_falls_back_to_zero(self):
+        limit = sys.get_int_max_str_digits()
+        if limit == 0:  # the interpreter was started with the check disabled
+            pytest.skip("int string conversion limit is disabled")
+        assert _parse_pytest_counts("9" * (limit + 1) + " passed") == (0, 0, 0)
